@@ -6,17 +6,17 @@ process.env.TZ = 'Asia/Colombo';
 const http = require('http');
 const PORT = process.env.PORT || 3000;
 
-// 🚀 Render Port Scan එක ක්ෂණිකව Pass කිරීමට HTTP Server එක මුලින්ම Start කිරීම
+// 🚀 Render Web Service එක Active තබා ගැනීමට HTTP Server එක
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Grade 11 ICT Short Note Bot is Running 24/7!\n');
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Server is live and listening on port ${PORT}`);
+    console.log(`🌐 Server is live on port ${PORT}`);
 });
 
-const { default: makeWASocket, DisconnectReason, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
@@ -37,68 +37,14 @@ if (!admin.apps.length) {
 }
 
 const db = admin.database();
-const authRef = db.ref('grade11_bot_auth'); 
 const noteHistoryRef = db.ref('grade11_note_history');
-
-// 🛠️ Firebase Keys Encode / Decode
-const fixKey = (key) => key.replace(/\./g, '_dot_').replace(/#/g, '_hash_').replace(/\$/g, '_dollar_').replace(/\[/g, '_lbracket_').replace(/\]/g, '_rbracket_').replace(/\//g, '_slash_');
-
-// 🔒 Firebase-backed Safe Auth State
-async function useFirebaseAuth(ref) {
-    let creds;
-    const credsSnapshot = await ref.child('creds').once('value');
-    const rawCreds = credsSnapshot.val();
-
-    if (rawCreds) {
-        creds = JSON.parse(rawCreds, BufferJSON.reviver);
-    } else {
-        creds = initAuthCreds();
-    }
-
-    return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    for (const id of ids) {
-                        const safeId = fixKey(id);
-                        const snap = await ref.child(`keys/${type}/${safeId}`).once('value');
-                        const val = snap.val();
-                        if (val) {
-                            data[id] = JSON.parse(val, BufferJSON.reviver);
-                        }
-                    }
-                    return data;
-                },
-                set: async (data) => {
-                    const updates = {};
-                    for (const type in data) {
-                        for (const id in data[type]) {
-                            const safeId = fixKey(id);
-                            const val = data[type][id];
-                            if (val) {
-                                updates[`keys/${type}/${safeId}`] = JSON.stringify(val, BufferJSON.replacer);
-                            } else {
-                                updates[`keys/${type}/${safeId}`] = null;
-                            }
-                        }
-                    }
-                    await ref.update(updates);
-                }
-            }
-        },
-        saveCreds: async () => {
-            await ref.child('creds').set(JSON.stringify(creds, BufferJSON.replacer));
-        }
-    };
-}
 
 async function appendToNoteHistory(data) {
     try {
         const timeString = new Date().toLocaleString('en-US', { timeZone: 'Asia/Colombo' });
         const entry = {
             timestamp: timeString,
+            grade: data.grade || 'Grade 10/11',
             unit: data.unit,
             topic: data.topic,
             content: data.content,
@@ -115,110 +61,102 @@ let cronStarted = false;
 let activeSock = null;
 
 async function connectToWhatsApp() {
-    try {
-        const { state, saveCreds } = await useFirebaseAuth(authRef);
+    // 🔒 Stable MultiFile Auth State
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_grade11');
+    
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: true
+    });
+
+    activeSock = sock;
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
         
-        const sock = makeWASocket({
-            auth: state,
-            printQRInTerminal: true
-        });
+        if (qr) {
+            console.log('\n--- අලුත් QR එක Scan කරන්න ---');
+            qrcode.generate(qr, { small: true });
+        }
 
-        activeSock = sock;
-
-        sock.ev.on('creds.update', saveCreds);
-
-        sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
+        if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`Connection closed (status: ${statusCode}), reconnecting... ${shouldReconnect}`);
             
-            if (qr) {
-                console.log('\n--- අලුත් QR එක Scan කරන්න ---');
-                qrcode.generate(qr, { small: true });
+            if (shouldReconnect) {
+                setTimeout(() => connectToWhatsApp(), 5000);
             }
+        } else if (connection === 'open') {
+            console.log('✅ Grade 11 Short Note Bot සාර්ථකව සම්බන්ධ විය!');
+            
+            if (!cronStarted) {
+                cronStarted = true;
+                // උදේ 8.00 සහ සවස 4.00 ට
+                cron.schedule('0 8,16 * * *', () => {
+                    console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
+                    sendDailyShortNote(activeSock);
+                }, {
+                    scheduled: true,
+                    timezone: "Asia/Colombo"
+                });
+                
+                console.log('⏰ ටයිමර් පද්ධතිය සාර්ථකව ක්‍රියාත්මකයි (8:00 AM, 4:00 PM).');
+            }
+        }
+    });
 
-            if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                console.log(`Connection closed (status: ${statusCode}), reconnecting... ${shouldReconnect}`);
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const m = messages[0];
+        if (!m.message) return;
+        
+        const messageText = m.message.conversation || m.message.extendedTextMessage?.text;
+        const chatJid = m.key.remoteJid;
+
+        if (messageText === '!jid') {
+            await sock.sendMessage(chatJid, { text: `📌 මෙම චැට් එකේ JID එක මෙන්න:\n\n\`${chatJid}\`` });
+        }
+
+        if (messageText === '!testnote') {
+            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. Short Note එක සකසමින් පවතී...' });
+            sendDailyShortNote(activeSock); 
+        }
+
+        if (messageText === '!notehistory') {
+            try {
+                const snapshot = await noteHistoryRef.once('value');
+                const historyData = snapshot.val();
                 
-                if (statusCode === DisconnectReason.loggedOut) {
-                    console.log('⚠️ Session එක Clear කර අලුතෙන් Login වෙන්න සූදානම් වේ...');
-                    await authRef.remove();
-                }
-                
-                if (shouldReconnect) {
-                    setTimeout(() => connectToWhatsApp(), 5000);
-                }
-            } else if (connection === 'open') {
-                console.log('✅ Grade 11 Short Note Bot සාර්ථකව සම්බන්ධ විය!');
-                
-                if (!cronStarted) {
-                    cronStarted = true;
-                    cron.schedule('0 8,16 * * *', () => {
-                        console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
-                        sendDailyShortNote(activeSock);
-                    }, {
-                        scheduled: true,
-                        timezone: "Asia/Colombo"
+                if (historyData) {
+                    let textContent = "📚 මෙතෙක් යවන ලද ICT කෙටි සටහන් එකතුව\n\n";
+                    
+                    Object.values(historyData).forEach(data => {
+                        textContent += `==================================================\n` +
+                                       `📅 දිනය: ${data.timestamp}\n` +
+                                       `📖 පාඩම: ${data.unit} (${data.grade || 'O/L'})\n` +
+                                       `📌 මාතෘකාව: ${data.topic}\n\n` +
+                                       `📝 සටහන:\n${data.content}\n\n` +
+                                       `💡 විශේෂ කරුණු:\n${(data.keyPoints || []).join('\n')}\n` +
+                                       `==================================================\n\n`;
                     });
-                    
-                    console.log('⏰ ටයිමර් පද්ධතිය සාර්ථකව ක්‍රියාත්මකයි (8:00 AM, 4:00 PM).');
+
+                    await sock.sendMessage(chatJid, {
+                        document: Buffer.from(textContent, 'utf-8'),
+                        mimetype: 'text/plain',
+                        fileName: 'Grade_10_11_ICT_Short_Notes.txt',
+                        caption: '📚 මෙතෙක් යවන ලද සියලුම ICT කෙටි සටහන් එකතුව මෙන්න!'
+                    });
+                } else {
+                    await sock.sendMessage(chatJid, { text: '⚠️ තවමත් කිසිදු සටහනක් History එකට සේව් වී නොමැත.' });
                 }
+            } catch (err) {
+                console.error('History command error:', err.message);
+                await sock.sendMessage(chatJid, { text: '⚠️ History දත්ත ලබා ගැනීමේදී දෝෂයක් ඇතිවිය.' });
             }
-        });
-
-        sock.ev.on('messages.upsert', async ({ messages }) => {
-            const m = messages[0];
-            if (!m.message) return;
-            
-            const messageText = m.message.conversation || m.message.extendedTextMessage?.text;
-            const chatJid = m.key.remoteJid;
-
-            if (messageText === '!jid') {
-                await sock.sendMessage(chatJid, { text: `📌 මෙම චැට් එකේ JID එක මෙන්න:\n\n\`${chatJid}\`` });
-            }
-
-            if (messageText === '!testnote') {
-                await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. Grade 11 Short Note එක සකසමින් පවතී...' });
-                sendDailyShortNote(activeSock); 
-            }
-
-            if (messageText === '!notehistory') {
-                try {
-                    const snapshot = await noteHistoryRef.once('value');
-                    const historyData = snapshot.val();
-                    
-                    if (historyData) {
-                        let textContent = "📚 මෙතෙක් යවන ලද Grade 11 ICT කෙටි සටහන් එකතුව\n\n";
-                        
-                        Object.values(historyData).forEach(data => {
-                            textContent += `==================================================\n` +
-                                           `📅 දිනය: ${data.timestamp}\n` +
-                                           `📖 පාඩම: ${data.unit}\n` +
-                                           `📌 මාතෘකාව: ${data.topic}\n\n` +
-                                           `📝 සටහන:\n${data.content}\n\n` +
-                                           `💡 විශේෂ කරුණු:\n${data.keyPoints.join('\n')}\n` +
-                                           `==================================================\n\n`;
-                        });
-
-                        await sock.sendMessage(chatJid, {
-                            document: Buffer.from(textContent, 'utf-8'),
-                            mimetype: 'text/plain',
-                            fileName: 'Grade_11_ICT_Short_Notes.txt',
-                            caption: '📚 මෙතෙක් යවන ලද සියලුම 11 වසර ICT කෙටි සටහන් එකතුව මෙන්න!'
-                        });
-                    } else {
-                        await sock.sendMessage(chatJid, { text: '⚠️ තවමත් කිසිදු සටහනක් History එකට සේව් වී නොමැත.' });
-                    }
-                } catch (err) {
-                    console.error('History command error:', err.message);
-                    await sock.sendMessage(chatJid, { text: '⚠️ History දත්ත ලබා ගැනීමේදී දෝෂයක් ඇතිවිය.' });
-                }
-            }
-        });
-    } catch (e) {
-        console.error('WhatsApp Connect Error:', e.message);
-        setTimeout(() => connectToWhatsApp(), 5000);
-    }
+        }
+    });
 }
 
 async function generateShortNoteFromGemini() {
@@ -234,42 +172,41 @@ async function generateShortNoteFromGemini() {
     }
 
     const excludedTopicsText = previousTopics.length > 0 
-        ? `Strictly AVOID generating notes for these topics again: ${JSON.stringify(previousTopics.slice(-40))}` 
+        ? `දැනටමත් සකසා ඇති මෙම මාතෘකා නැවත කිසිසේත් භාවිත නොකරන්න: ${JSON.stringify(previousTopics.slice(-60))}` 
         : '';
 
-    const promptText = `You are an expert Sri Lankan GCE O/L ICT Teacher preparing revision short notes for Grade 11 students.
-    Generate ONE high-yield, exam-focused revision short note in clean, simple Sinhala based strictly on the Sri Lankan Grade 11 ICT syllabus.
+    const promptText = `ඔබ ශ්‍රී ලංකා අධ්‍යාපන ප්‍රකාශන දෙපාර්තමේන්තුවේ 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් (National NIE Grade 10 & 11 ICT Textbooks) පමණක් පරිශීලනය කරන ප්‍රවීණ ගුරුවරයෙකි.
 
-    Grade 11 Focus Areas:
-    - Programming & Flowcharts (Pascal concepts, Control structures, Arrays, Pseudocode)
-    - Systems Development Life Cycle (SDLC phases, Testing methods, Deployment methods)
-    - Internet & Web Technologies (HTML tags, CSS, protocols like HTTP/FTP/IP)
-    - Computer Networks (Topologies, Transmission media, IP addressing, Network devices)
-    - Database Management (Entities, Attributes, Relationships, Keys, SQL basic queries)
-    - Multimedia & ICT in Society (File formats, Compression, Ethical issues)
+සාමාන්‍ය පෙළ (G.C.E. O/L) විභාගයට පෙනී සිටින සිසුන් සඳහා පහත දැක්වෙන 10 හෝ 11 ශ්‍රේණිවල නිල පෙළපොත් ඒකක අතරින් ඕනෑම එක් උප මාතෘකාවක් තෝරාගෙන කෙටි සටහනක් (Revision Short Note) පිරිසිදු සිංහලෙන් සකසන්න.
 
-    ${excludedTopicsText}
+📚 නිල පෙළපොත් විෂය නිර්දේශය (Grade 10 & 11 All Units):
+[10 ශ්‍රේණිය]: මූලික සංකල්ප, පරිගණක දෘඩාංග/මතක, දත්ත නිරූපණය සහ අංක ක්‍රම, තාර්කික ද්වාර (Logic Gates), මෙහෙයුම් පද්ධති (OS), වදන් සැකසුම් (Word), පැතුරුම්පත් (Excel), විද්‍යුත් ඉදිරිපත් කිරීම් (PowerPoint).
+[11 ශ්‍රේණිය]: ක්‍රමලේඛනය (Pascal), පද්ධති සංවර්ධන ජීවන චක්‍රය (SDLC), අන්තර්ජාලය හා ඊමේල් (HTML/Web), බහුමාධ්‍ය යෙදුම්, දත්ත සමුදාය (DBMS/Keys), සමාජය තුළ ICT හා සයිබර් ආරක්ෂාව.
 
-    CRITICAL RULES:
-    1. The note must be concise, extremely clear, and formatted for quick revision.
-    2. Keep explanations easy for O/L students to memorize.
-    3. Provide 3-4 bullet points as 'keyPoints' (Quick Memory Tips / විභාගයට වැදගත් කරුණු).
+⛔ දැඩි සීමා කිරීම්:
+- පෙළපොත්වල නැති කිසිදු බාහිර දැනුමක් (A/L ICT, Python, Java) ඇතුළත් නොකරන්න.
+- ශ්‍රී ලංකා පෙළපොත්වල ඇති නිල සිංහල තාක්ෂණික වචන පමණක් භාවිත කරන්න.
+- ${excludedTopicsText}
 
-    Return STRICTLY in JSON format:
-    {
-      "unit": "පාඩමේ නම (e.g. ක්‍රමලේඛනය - Programming)",
-      "topic": "උප මාතෘකාව (e.g. While Loop සහ Repeat Until අතර වෙනස)",
-      "content": "පැහැදිලි කෙටි සටහන (Clear paragraph with Sinhala technical terms)",
-      "keyPoints": [
-        "🔹 කරුණ 1",
-        "🔹 කරුණ 2",
-        "🔹 කරුණ 3"
-      ]
-    }`;
+Return STRICTLY in JSON format:
+{
+  "grade": "10 ශ්‍රේණිය හෝ 11 ශ්‍රේණිය",
+  "unit": "පාඩමේ නම",
+  "topic": "උප මාතෘකාව",
+  "content": "පෙළපොතට අනුකූලව කෙටි, පැහැදිලි සටහන",
+  "keyPoints": [
+    "🔹 විභාගයට අතිශය වැදගත් කරුණ 1",
+    "🔹 විභාගයට අතිශය වැදගත් කරුණ 2",
+    "🔹 විභාගයට අතිශය වැදගත් කරුණ 3"
+  ]
+}`;
 
     const requestBody = {
         contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.8 }
+        generationConfig: { 
+            responseMimeType: "application/json", 
+            temperature: 0.35 
+        }
     };
 
     const response = await fetch(url, {
@@ -298,16 +235,16 @@ async function sendDailyShortNote(sock, retryCount = 0) {
     const MAX_RETRIES = 3;
     
     try {
-        console.log('Gemini AI මඟින් 11 වසර කෙටි සටහන සකසමින් පවතී...');
+        console.log('Gemini AI මඟින් කෙටි සටහන සකසමින් පවතී...');
         
         const noteData = await generateShortNoteFromGemini();
 
         const targetGroups = [
-            '120363429635141660@g.us', 
+            '120363429635141660@g.us', // ඔයාගේ Group JID එක
         ];
 
         const messageText = 
-`📌 *G.C.E. O/L ICT - Grade 11 Quick Revision*
+`📌 *G.C.E. O/L ICT - Quick Revision* (${noteData.grade || 'Grade 10/11'})
 ━━━━━━━━━━━━━━━━━━━━━
 📖 *පාඩම:* ${noteData.unit}
 🎯 *මාතෘකාව:* ${noteData.topic}
@@ -317,7 +254,7 @@ async function sendDailyShortNote(sock, retryCount = 0) {
 ${noteData.content}
 
 💡 *විභාගයට වැදගත් විශේෂ කරුණු:*
-${noteData.keyPoints.join('\n')}
+${(noteData.keyPoints || []).join('\n')}
 
 ━━━━━━━━━━━━━━━━━━━━━
 _දිනපතා කෙටි සටහන් ලබා ගැනීමට සම්බන්ධ වී සිටින්න._
@@ -327,7 +264,7 @@ _දිනපතා කෙටි සටහන් ලබා ගැනීමට �
             await sock.sendMessage(targetJid, { text: messageText });
         }
         
-        console.log('✅ සියලුම 11 වසර ගෲප් වෙත කෙටි සටහන සාර්ථකව යැව්වා!');
+        console.log('✅ සියලුම ගෲප් වෙත කෙටි සටහන සාර්ථකව යැව්වා!');
         await appendToNoteHistory(noteData);
 
     } catch (error) {
