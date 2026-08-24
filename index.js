@@ -1,18 +1,18 @@
 require('dotenv').config();
 
-// 🇱🇰 සර්වර් එකේ Timezone එක ලංකාවේ වෙලාවට සැකසීම
+// 🇱🇰 Timezone එක ලංකාවේ වෙලාවට සැකසීම
 process.env.TZ = 'Asia/Colombo';
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const http = require('http');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
 
-// Render Port scan check එක සඳහා
+// Render Port scan check එක
 http.createServer((req, res) => res.end('Grade 11 ICT Short Note Bot is Running!')).listen(process.env.PORT || 3000);
 
-// 🔥 Firebase Admin SDK Initialize කිරීම
+// 🔥 Firebase Admin Initialize කිරීම
 let firebaseCreds;
 try {
     firebaseCreds = JSON.parse(process.env.FIREBASE_CREDENTIALS);
@@ -26,8 +26,57 @@ admin.initializeApp({
 });
 
 const db = admin.database();
-const noteStoreRef = db.ref('grade11_note_store');
+const authRef = db.ref('grade11_bot_auth'); // WhatsApp Session එක Firebase එකේ save වෙන තැන
 const noteHistoryRef = db.ref('grade11_note_history');
+
+// 🔒 Firebase-backed Auth State (Logout වීම සම්පූර්ණයෙන්ම වළක්වයි)
+async function useFirebaseAuth(ref) {
+    let creds;
+    const credsSnapshot = await ref.child('creds').once('value');
+    const rawCreds = credsSnapshot.val();
+
+    if (rawCreds) {
+        creds = JSON.parse(rawCreds, BufferJSON.reviver);
+    } else {
+        creds = initAuthCreds();
+    }
+
+    return {
+        state: {
+            creds,
+            keys: {
+                get: async (type, ids) => {
+                    const data = {};
+                    for (const id of ids) {
+                        const snap = await ref.child(`keys/${type}/${id}`).once('value');
+                        const val = snap.val();
+                        if (val) {
+                            data[id] = JSON.parse(val, BufferJSON.reviver);
+                        }
+                    }
+                    return data;
+                },
+                set: async (data) => {
+                    const updates = {};
+                    for (const type in data) {
+                        for (const id in data[type]) {
+                            const val = data[type][id];
+                            if (val) {
+                                updates[`keys/${type}/${id}`] = JSON.stringify(val, BufferJSON.replacer);
+                            } else {
+                                updates[`keys/${type}/${id}`] = null;
+                            }
+                        }
+                    }
+                    await ref.update(updates);
+                }
+            }
+        },
+        saveCreds: async () => {
+            await ref.child('creds').set(JSON.stringify(creds, BufferJSON.replacer));
+        }
+    };
+}
 
 async function appendToNoteHistory(data) {
     try {
@@ -50,7 +99,7 @@ let cronStarted = false;
 let activeSock = null;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_grade11');
+    const { state, saveCreds } = await useFirebaseAuth(authRef);
     
     const sock = makeWASocket({
         auth: state,
@@ -61,7 +110,7 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
@@ -70,17 +119,24 @@ async function connectToWhatsApp() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut);
-            console.log('Connection closed, reconnecting...', shouldReconnect);
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`Connection closed (status: ${statusCode}), reconnecting... ${shouldReconnect}`);
+            
+            if (statusCode === DisconnectReason.loggedOut) {
+                console.log('⚠️ Session එක Clear කර අලුතෙන් Login වෙන්න සූදානම් වේ...');
+                await authRef.remove();
+            }
+            
             if (shouldReconnect) {
-                connectToWhatsApp();
+                setTimeout(() => connectToWhatsApp(), 5000);
             }
         } else if (connection === 'open') {
             console.log('✅ Grade 11 Short Note Bot සාර්ථකව සම්බන්ධ විය!');
             
             if (!cronStarted) {
                 cronStarted = true;
-                // උදේ 8.00 සහ සවස 4.00 ට (ඔයාට කැමති වෙලාවක් දාගන්න පුළුවන්)
+                // උදේ 8.00 සහ සවස 4.00 ට
                 cron.schedule('0 8,16 * * *', () => {
                     console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
                     sendDailyShortNote(activeSock);
@@ -226,10 +282,9 @@ async function sendDailyShortNote(sock, retryCount = 0) {
         
         const noteData = await generateShortNoteFromGemini();
 
-        // 11 වසර WhatsApp Group JIDs මෙතැනට දාන්න
+        // 11 වසර Groups වල JID මෙතැනට දාන්න
         const targetGroups = [
-            '120363429635141660@g.us', // උදාහරණ Group JID එකක්
-            // '120363xxxxxxxxx@g.us'
+            '120363429635141660@g.us', 
         ];
 
         const messageText = 
@@ -248,7 +303,7 @@ ${noteData.keyPoints.join('\n')}
 ━━━━━━━━━━━━━━━━━━━━━
 _දිනපතා කෙටි සටහන් ලබා ගැනීමට සම්බන්ධ වී සිටින්න._
 👨‍🏫 *ICT with Dhanush Pathirana*`;
-        
+
         for (const targetJid of targetGroups) {
             await sock.sendMessage(targetJid, { text: messageText });
         }
