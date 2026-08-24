@@ -163,18 +163,27 @@ async function generatePosterImage(noteData) {
     </body>
     </html>`;
 
-    const response = await fetch('https://hcti.co/v1/image', {
+    const credentials = Buffer.from(`${userId}:${apiKey}`).toString('base64');
+    
+    const response = await fetch('https://api.htmlcsstoimage.com/v1/image', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic ' + Buffer.from(`${userId}:${apiKey}`).toString('base64')
+            'Authorization': `Basic ${credentials}`
         },
         body: JSON.stringify({ html: htmlContent, selector: '.poster' })
     });
 
-    const data = await response.json();
-    if (!data.url) {
-        throw new Error('Image generation failed: ' + JSON.stringify(data));
+    const responseText = await response.text();
+    let data;
+    try {
+        data = JSON.parse(responseText);
+    } catch (e) {
+        throw new Error(`HCTI Invalid Response: ${responseText}`);
+    }
+
+    if (!response.ok || !data.url) {
+        throw new Error(`HCTI Error (${response.status}): ${JSON.stringify(data)}`);
     }
 
     const imageRes = await fetch(data.url);
@@ -190,7 +199,9 @@ async function connectToWhatsApp() {
     
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: true,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000
     });
 
     activeSock = sock;
@@ -296,7 +307,7 @@ async function sendDailyShortNote(sock, retryCount = 0) {
         await appendToNoteHistory(noteData);
         console.log('✅ Dynamic Poster Image එක සාර්ථකව යැව්වා!');
     } catch (error) {
-        console.error('⚠️ දෝෂයක්:', error.message);
+        console.error('⚠️ Detailed Error Stack:', error);
     }
 }
 
