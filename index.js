@@ -3,14 +3,23 @@ require('dotenv').config();
 // 🇱🇰 Timezone එක ලංකාවේ වෙලාවට සැකසීම
 process.env.TZ = 'Asia/Colombo';
 
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+
+// 🚀 Render Port Scan එක ක්ෂණිකව Pass කිරීමට HTTP Server එක මුලින්ම Start කිරීම
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Grade 11 ICT Short Note Bot is Running 24/7!\n');
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Server is live and listening on port ${PORT}`);
+});
+
 const { default: makeWASocket, DisconnectReason, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
-const http = require('http');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
-
-// Render Port scan check එක
-http.createServer((req, res) => res.end('Grade 11 ICT Short Note Bot is Running!')).listen(process.env.PORT || 3000);
 
 // 🔥 Firebase Admin Initialize කිරීම
 let firebaseCreds;
@@ -20,18 +29,19 @@ try {
     console.error("⚠️ Firebase Credentials දෝෂයක්! FIREBASE_CREDENTIALS පරීක්ෂා කරන්න.");
 }
 
-admin.initializeApp({
-    credential: admin.credential.cert(firebaseCreds),
-    databaseURL: process.env.FIREBASE_DB_URL
-});
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert(firebaseCreds),
+        databaseURL: process.env.FIREBASE_DB_URL
+    });
+}
 
 const db = admin.database();
 const authRef = db.ref('grade11_bot_auth'); 
 const noteHistoryRef = db.ref('grade11_note_history');
 
-// 🛠️ Firebase Keys වලට තහනම් අක්ෂර (. # $ [ ]) Encode/Decode කිරීම
+// 🛠️ Firebase Keys Encode / Decode
 const fixKey = (key) => key.replace(/\./g, '_dot_').replace(/#/g, '_hash_').replace(/\$/g, '_dollar_').replace(/\[/g, '_lbracket_').replace(/\]/g, '_rbracket_').replace(/\//g, '_slash_');
-const unfixKey = (key) => key.replace(/_dot_/g, '.').replace(/_hash_/g, '#').replace(/_dollar_/g, '$').replace(/_lbracket_/g, '[').replace(/_rbracket_/g, ']').replace(/_slash_/g, '/');
 
 // 🔒 Firebase-backed Safe Auth State
 async function useFirebaseAuth(ref) {
@@ -105,105 +115,110 @@ let cronStarted = false;
 let activeSock = null;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useFirebaseAuth(authRef);
-    
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true
-    });
-
-    activeSock = sock;
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    try {
+        const { state, saveCreds } = await useFirebaseAuth(authRef);
         
-        if (qr) {
-            console.log('\n--- අලුත් QR එක Scan කරන්න ---');
-            qrcode.generate(qr, { small: true });
-        }
+        const sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: true
+        });
 
-        if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`Connection closed (status: ${statusCode}), reconnecting... ${shouldReconnect}`);
+        activeSock = sock;
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
             
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log('⚠️ Session එක Clear කර අලුතෙන් Login වෙන්න සූදානම් වේ...');
-                await authRef.remove();
+            if (qr) {
+                console.log('\n--- අලුත් QR එක Scan කරන්න ---');
+                qrcode.generate(qr, { small: true });
             }
-            
-            if (shouldReconnect) {
-                setTimeout(() => connectToWhatsApp(), 5000);
-            }
-        } else if (connection === 'open') {
-            console.log('✅ Grade 11 Short Note Bot සාර්ථකව සම්බන්ධ විය!');
-            
-            if (!cronStarted) {
-                cronStarted = true;
-                cron.schedule('0 8,16 * * *', () => {
-                    console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
-                    sendDailyShortNote(activeSock);
-                }, {
-                    scheduled: true,
-                    timezone: "Asia/Colombo"
-                });
+
+            if (connection === 'close') {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                console.log(`Connection closed (status: ${statusCode}), reconnecting... ${shouldReconnect}`);
                 
-                console.log('⏰ ටයිමර් පද්ධතිය සාර්ථකව ක්‍රියාත්මකයි (8:00 AM, 4:00 PM).');
-            }
-        }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        const m = messages[0];
-        if (!m.message) return;
-        
-        const messageText = m.message.conversation || m.message.extendedTextMessage?.text;
-        const chatJid = m.key.remoteJid;
-
-        if (messageText === '!jid') {
-            await sock.sendMessage(chatJid, { text: `📌 මෙම චැට් එකේ JID එක මෙන්න:\n\n\`${chatJid}\`` });
-        }
-
-        if (messageText === '!testnote') {
-            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. Grade 11 Short Note එක සකසමින් පවතී...' });
-            sendDailyShortNote(activeSock); 
-        }
-
-        if (messageText === '!notehistory') {
-            try {
-                const snapshot = await noteHistoryRef.once('value');
-                const historyData = snapshot.val();
-                
-                if (historyData) {
-                    let textContent = "📚 මෙතෙක් යවන ලද Grade 11 ICT කෙටි සටහන් එකතුව\n\n";
-                    
-                    Object.values(historyData).forEach(data => {
-                        textContent += `==================================================\n` +
-                                       `📅 දිනය: ${data.timestamp}\n` +
-                                       `📖 පාඩම: ${data.unit}\n` +
-                                       `📌 මාතෘකාව: ${data.topic}\n\n` +
-                                       `📝 සටහන:\n${data.content}\n\n` +
-                                       `💡 විශේෂ කරුණු:\n${data.keyPoints.join('\n')}\n` +
-                                       `==================================================\n\n`;
-                    });
-
-                    await sock.sendMessage(chatJid, {
-                        document: Buffer.from(textContent, 'utf-8'),
-                        mimetype: 'text/plain',
-                        fileName: 'Grade_11_ICT_Short_Notes.txt',
-                        caption: '📚 මෙතෙක් යවන ලද සියලුම 11 වසර ICT කෙටි සටහන් එකතුව මෙන්න!'
-                    });
-                } else {
-                    await sock.sendMessage(chatJid, { text: '⚠️ තවමත් කිසිදු සටහනක් History එකට සේව් වී නොමැත.' });
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log('⚠️ Session එක Clear කර අලුතෙන් Login වෙන්න සූදානම් වේ...');
+                    await authRef.remove();
                 }
-            } catch (err) {
-                console.error('History command error:', err.message);
-                await sock.sendMessage(chatJid, { text: '⚠️ History දත්ත ලබා ගැනීමේදී දෝෂයක් ඇතිවිය.' });
+                
+                if (shouldReconnect) {
+                    setTimeout(() => connectToWhatsApp(), 5000);
+                }
+            } else if (connection === 'open') {
+                console.log('✅ Grade 11 Short Note Bot සාර්ථකව සම්බන්ධ විය!');
+                
+                if (!cronStarted) {
+                    cronStarted = true;
+                    cron.schedule('0 8,16 * * *', () => {
+                        console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
+                        sendDailyShortNote(activeSock);
+                    }, {
+                        scheduled: true,
+                        timezone: "Asia/Colombo"
+                    });
+                    
+                    console.log('⏰ ටයිමර් පද්ධතිය සාර්ථකව ක්‍රියාත්මකයි (8:00 AM, 4:00 PM).');
+                }
             }
-        }
-    });
+        });
+
+        sock.ev.on('messages.upsert', async ({ messages }) => {
+            const m = messages[0];
+            if (!m.message) return;
+            
+            const messageText = m.message.conversation || m.message.extendedTextMessage?.text;
+            const chatJid = m.key.remoteJid;
+
+            if (messageText === '!jid') {
+                await sock.sendMessage(chatJid, { text: `📌 මෙම චැට් එකේ JID එක මෙන්න:\n\n\`${chatJid}\`` });
+            }
+
+            if (messageText === '!testnote') {
+                await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. Grade 11 Short Note එක සකසමින් පවතී...' });
+                sendDailyShortNote(activeSock); 
+            }
+
+            if (messageText === '!notehistory') {
+                try {
+                    const snapshot = await noteHistoryRef.once('value');
+                    const historyData = snapshot.val();
+                    
+                    if (historyData) {
+                        let textContent = "📚 මෙතෙක් යවන ලද Grade 11 ICT කෙටි සටහන් එකතුව\n\n";
+                        
+                        Object.values(historyData).forEach(data => {
+                            textContent += `==================================================\n` +
+                                           `📅 දිනය: ${data.timestamp}\n` +
+                                           `📖 පාඩම: ${data.unit}\n` +
+                                           `📌 මාතෘකාව: ${data.topic}\n\n` +
+                                           `📝 සටහන:\n${data.content}\n\n` +
+                                           `💡 විශේෂ කරුණු:\n${data.keyPoints.join('\n')}\n` +
+                                           `==================================================\n\n`;
+                        });
+
+                        await sock.sendMessage(chatJid, {
+                            document: Buffer.from(textContent, 'utf-8'),
+                            mimetype: 'text/plain',
+                            fileName: 'Grade_11_ICT_Short_Notes.txt',
+                            caption: '📚 මෙතෙක් යවන ලද සියලුම 11 වසර ICT කෙටි සටහන් එකතුව මෙන්න!'
+                        });
+                    } else {
+                        await sock.sendMessage(chatJid, { text: '⚠️ තවමත් කිසිදු සටහනක් History එකට සේව් වී නොමැත.' });
+                    }
+                } catch (err) {
+                    console.error('History command error:', err.message);
+                    await sock.sendMessage(chatJid, { text: '⚠️ History දත්ත ලබා ගැනීමේදී දෝෂයක් ඇතිවිය.' });
+                }
+            }
+        });
+    } catch (e) {
+        console.error('WhatsApp Connect Error:', e.message);
+        setTimeout(() => connectToWhatsApp(), 5000);
+    }
 }
 
 async function generateShortNoteFromGemini() {
@@ -288,7 +303,7 @@ async function sendDailyShortNote(sock, retryCount = 0) {
         const noteData = await generateShortNoteFromGemini();
 
         const targetGroups = [
-            '120363429635141660@g.us', // ඔයාගේ Group JID එක
+            '120363429635141660@g.us', 
         ];
 
         const messageText = 
