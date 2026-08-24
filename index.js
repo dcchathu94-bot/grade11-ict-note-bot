@@ -57,7 +57,7 @@ async function appendToNoteHistory(data) {
     }
 }
 
-// 🎨 HCTI API හරහා Dynamic HTML Poster එකක් Image එකක් බවට හැරවීම
+// 🎨 HCTI API හරහා Dynamic HTML Poster එකක් Image එකක් බවට හැරවීම (Timeout Handling සමඟ)
 async function generatePosterImage(noteData) {
     const userId = process.env.HCTI_USER_ID;
     const apiKey = process.env.HCTI_API_KEY;
@@ -165,30 +165,41 @@ async function generatePosterImage(noteData) {
 
     const credentials = Buffer.from(`${userId}:${apiKey}`).toString('base64');
     
-    const response = await fetch('https://api.htmlcsstoimage.com/v1/image', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Basic ${credentials}`
-        },
-        body: JSON.stringify({ html: htmlContent, selector: '.poster' })
-    });
+    // ⏱️ Timeout මඟහරවා ගැනීමට AbortController එකක් භාවිත කිරීම
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
-    const responseText = await response.text();
-    let data;
     try {
-        data = JSON.parse(responseText);
-    } catch (e) {
-        throw new Error(`HCTI Invalid Response: ${responseText}`);
-    }
+        const response = await fetch('https://api.htmlcsstoimage.com/v1/image', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Basic ${credentials}`
+            },
+            body: JSON.stringify({ html: htmlContent, selector: '.poster' }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
-    if (!response.ok || !data.url) {
-        throw new Error(`HCTI Error (${response.status}): ${JSON.stringify(data)}`);
-    }
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (e) {
+            throw new Error(`HCTI Invalid Response: ${responseText}`);
+        }
 
-    const imageRes = await fetch(data.url);
-    const arrayBuffer = await imageRes.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+        if (!response.ok || !data.url) {
+            throw new Error(`HCTI Error (${response.status}): ${JSON.stringify(data)}`);
+        }
+
+        const imageRes = await fetch(data.url);
+        const arrayBuffer = await imageRes.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
+    }
 }
 
 let cronStarted = false; 
@@ -250,7 +261,7 @@ async function generateShortNoteFromGemini() {
     const promptText = `ඔබ ශ්‍රී ලංකා අධ්‍යාපන ප්‍රකාශන දෙපාර්තමේන්තුවේ 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් පමණක් පරිශීලනය කරන ප්‍රවීණ ගුරුවරයෙකි.
 අමුණා ඇති 10 සහ 11 ශ්‍රේණි පෙළපොත් PDF ලේඛන දෙකේ අන්තර්ගතය පමණක් පදනම් කරගෙන, O/L විභාගයට වැදගත් කෙටි සටහනක් පිරිසිදු සිංහලෙන් සකසන්න.
 
-Return STRICTLY in JSON format:
+Return STRICTLY in JSON format with no markdown wrappers or extra text:
 {
   "grade": "10 ශ්‍රේණිය හෝ 11 ශ්‍රේණිය",
   "unit": "පාඩමේ නම",
@@ -289,13 +300,18 @@ Return STRICTLY in JSON format:
         throw new Error('Gemini API එකෙන් නිවැරදි ප්‍රතිචාරයක් ලැබී නැත: ' + JSON.stringify(result));
     }
 
-    const rawJSON = result.candidates[0].content.parts[0].text;
-    const jsonMatch = rawJSON.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        throw new Error('JSON format දෝෂයකි: ' + rawJSON);
-    }
+    const rawText = result.candidates[0].content.parts[0].text.trim();
     
-    return JSON.parse(jsonMatch[0]);
+    // 🧹 JSON වරහන් අතර කොටස පමණක් පරිස්සමින් තෝරා ගැනීම
+    const firstBrace = rawText.indexOf('{');
+    const lastBrace = rawText.lastIndexOf('}');
+    
+    if (firstBrace === -1 || lastBrace === -1) {
+        throw new Error('JSON format දෝෂයකි: ' + rawText);
+    }
+
+    const cleanJSON = rawText.substring(firstBrace, lastBrace + 1);
+    return JSON.parse(cleanJSON);
 }
 
 async function sendDailyShortNote(sock, retryCount = 0) {
