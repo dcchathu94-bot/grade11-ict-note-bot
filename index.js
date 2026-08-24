@@ -246,8 +246,9 @@ ${noteData.content}
 ${noteData.keyPoints.join('\n')}
 
 ━━━━━━━━━━━━━━━━━━━━━
-_දිනපතා කෙටි සටහන් ලබා ගැනීමට සම්බන්ධ වී සිටින්න._`;
-
+_දිනපතා කෙටි සටහන් ලබා ගැනීමට සම්බන්ධ වී සිටින්න._
+👨‍🏫 *ICT with Dhanush Pathirana*`;
+        
         for (const targetJid of targetGroups) {
             await sock.sendMessage(targetJid, { text: messageText });
         }
