@@ -6,10 +6,10 @@ process.env.TZ = 'Asia/Colombo';
 const http = require('http');
 const PORT = process.env.PORT || 3000;
 
-// 🚀 Render Web Service එක Active තබා ගැනීම
+// 🚀 Render Web Service එක Active තබා ගැනීමට HTTP Server එක
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Grade 10 & 11 ICT Short Note Bot is Live 24/7!\n');
+    res.end('Grade 10 & 11 ICT Textbook Short Note Bot is Live 24/7!\n');
 });
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -89,7 +89,7 @@ async function connectToWhatsApp() {
                 setTimeout(() => connectToWhatsApp(), 5000);
             }
         } else if (connection === 'open') {
-            console.log('✅ ICT Short Note Bot සාර්ථකව සම්බන්ධ විය!');
+            console.log('✅ ICT Short Note Bot (Textbook Grounded) සාර්ථකව සම්බන්ධ විය!');
             
             if (!cronStarted) {
                 cronStarted = true;
@@ -119,7 +119,7 @@ async function connectToWhatsApp() {
         }
 
         if (messageText === '!testnote') {
-            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. Short Note එක සකසමින් පවතී...' });
+            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. පෙළපොත් ඇසුරෙන් Short Note එක සකසමින් පවතී...' });
             sendDailyShortNote(activeSock); 
         }
 
@@ -158,7 +158,7 @@ async function connectToWhatsApp() {
     });
 }
 
-// 📖 10 සහ 11 පෙළපොත් PDF දෙක ඇසුරෙන් Short Note සෑදීම
+// 📖 අමුණන ලද 10 සහ 11 පෙළපොත් PDF දෙක ඇසුරෙන් පමණක් Short Note එක සෑදීම
 async function generateShortNoteFromGemini() {
     const apiKey = process.env.GEMINI_API_KEY;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
@@ -175,7 +175,7 @@ async function generateShortNoteFromGemini() {
         ? `දැනටමත් සකසා ඇති මෙම මාතෘකා නැවත භාවිත නොකරන්න: ${JSON.stringify(previousTopics.slice(-60))}` 
         : '';
 
-    const promptText = `ඔබ ශ්‍රී ලංකා අධ්‍යාපන ප්‍රකාශන දෙපාර්තමේන්තුවේ 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් පමණක් පරිශීලනය කරන ප්‍රවීණ ගුරුවරයෙකි.
+    const promptText = `ඔබ ශ්‍රී ලංකා ජාතික අධ්‍යාපන ආයතනයේ (NIE) 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් පමණක් පරිශීලනය කරන ප්‍රවීණ ගුරුවරයෙකි.
 
 අමුණා ඇති 10 සහ 11 ශ්‍රේණි පෙළපොත් PDF ලේඛන දෙකේ (Attached Files) අන්තර්ගතය පමණක් දැඩිව පදනම් කරගෙන, සාමාන්‍ය පෙළ (O/L) විභාගයට අතිශය වැදගත් කෙටි සටහනක් (Revision Short Note) පිරිසිදු සිංහලෙන් සකසන්න.
 
@@ -189,7 +189,7 @@ Return STRICTLY in JSON format:
   "grade": "10 ශ්‍රේණිය හෝ 11 ශ්‍රේණිය",
   "unit": "පෙළපොතේ ඇති පාඩමේ නම",
   "topic": "උප මාතෘකාව",
-  "content": "පෙළපොත ඇසුරෙන් කෙටි, පැහැදිලි සටහන",
+  "content": "පෙළපොත ඇසුරෙන් පමණක් කෙටි, නිවැරදි සටහන (Clear paragraph with textbook terms)",
   "keyPoints": [
     "🔹 විභාගයට වැදගත් කරුණ 1",
     "🔹 විභාගයට වැදගත් කරුණ 2",
@@ -197,6 +197,7 @@ Return STRICTLY in JSON format:
   ]
 }`;
 
+    // 📎 පෙළපොත් දෙකේ URIs කෙලින්ම Gemini Input එකට සම්බන්ධ කිරීම
     const requestBody = {
         contents: [
             {
@@ -204,13 +205,13 @@ Return STRICTLY in JSON format:
                     {
                         fileData: {
                             mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/x7clqnazq98o"
+                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/x7clqnazq98o" // 10 ශ්‍රේණිය පෙළපොත
                         }
                     },
                     {
                         fileData: {
                             mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/he8on2exgrfx"
+                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/he8on2exgrfx" // 11 ශ්‍රේණිය පෙළපොත
                         }
                     },
                     {
@@ -221,7 +222,7 @@ Return STRICTLY in JSON format:
         ],
         generationConfig: { 
             responseMimeType: "application/json", 
-            temperature: 0.25 
+            temperature: 0.2 // පෙළපොතේ තොරතුරු වලට පමණක් දැඩිව සීමා කිරීමට
         }
     };
 
