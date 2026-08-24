@@ -284,8 +284,17 @@ Return STRICTLY in JSON format:
     });
 
     const result = await response.json();
+    
+    if (!result.candidates || result.candidates.length === 0 || !result.candidates[0].content) {
+        throw new Error('Gemini API එකෙන් නිවැරදි ප්‍රතිචාරයක් ලැබී නැත: ' + JSON.stringify(result));
+    }
+
     const rawJSON = result.candidates[0].content.parts[0].text;
     const jsonMatch = rawJSON.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        throw new Error('JSON format දෝෂයකි: ' + rawJSON);
+    }
+    
     return JSON.parse(jsonMatch[0]);
 }
 
