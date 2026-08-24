@@ -3,7 +3,7 @@ require('dotenv').config();
 // 🇱🇰 Timezone එක ලංකාවේ වෙලාවට සැකසීම
 process.env.TZ = 'Asia/Colombo';
 
-const { default: makeWASocket, DisconnectReason, initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const http = require('http');
 const cron = require('node-cron');
@@ -26,10 +26,14 @@ admin.initializeApp({
 });
 
 const db = admin.database();
-const authRef = db.ref('grade11_bot_auth'); // WhatsApp Session එක Firebase එකේ save වෙන තැන
+const authRef = db.ref('grade11_bot_auth'); 
 const noteHistoryRef = db.ref('grade11_note_history');
 
-// 🔒 Firebase-backed Auth State (Logout වීම සම්පූර්ණයෙන්ම වළක්වයි)
+// 🛠️ Firebase Keys වලට තහනම් අක්ෂර (. # $ [ ]) Encode/Decode කිරීම
+const fixKey = (key) => key.replace(/\./g, '_dot_').replace(/#/g, '_hash_').replace(/\$/g, '_dollar_').replace(/\[/g, '_lbracket_').replace(/\]/g, '_rbracket_').replace(/\//g, '_slash_');
+const unfixKey = (key) => key.replace(/_dot_/g, '.').replace(/_hash_/g, '#').replace(/_dollar_/g, '$').replace(/_lbracket_/g, '[').replace(/_rbracket_/g, ']').replace(/_slash_/g, '/');
+
+// 🔒 Firebase-backed Safe Auth State
 async function useFirebaseAuth(ref) {
     let creds;
     const credsSnapshot = await ref.child('creds').once('value');
@@ -48,7 +52,8 @@ async function useFirebaseAuth(ref) {
                 get: async (type, ids) => {
                     const data = {};
                     for (const id of ids) {
-                        const snap = await ref.child(`keys/${type}/${id}`).once('value');
+                        const safeId = fixKey(id);
+                        const snap = await ref.child(`keys/${type}/${safeId}`).once('value');
                         const val = snap.val();
                         if (val) {
                             data[id] = JSON.parse(val, BufferJSON.reviver);
@@ -60,11 +65,12 @@ async function useFirebaseAuth(ref) {
                     const updates = {};
                     for (const type in data) {
                         for (const id in data[type]) {
+                            const safeId = fixKey(id);
                             const val = data[type][id];
                             if (val) {
-                                updates[`keys/${type}/${id}`] = JSON.stringify(val, BufferJSON.replacer);
+                                updates[`keys/${type}/${safeId}`] = JSON.stringify(val, BufferJSON.replacer);
                             } else {
-                                updates[`keys/${type}/${id}`] = null;
+                                updates[`keys/${type}/${safeId}`] = null;
                             }
                         }
                     }
@@ -136,7 +142,6 @@ async function connectToWhatsApp() {
             
             if (!cronStarted) {
                 cronStarted = true;
-                // උදේ 8.00 සහ සවස 4.00 ට
                 cron.schedule('0 8,16 * * *', () => {
                     console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
                     sendDailyShortNote(activeSock);
@@ -166,7 +171,7 @@ async function connectToWhatsApp() {
             sendDailyShortNote(activeSock); 
         }
 
-        if (messageText === '!note_history') {
+        if (messageText === '!notehistory') {
             try {
                 const snapshot = await noteHistoryRef.once('value');
                 const historyData = snapshot.val();
@@ -282,9 +287,8 @@ async function sendDailyShortNote(sock, retryCount = 0) {
         
         const noteData = await generateShortNoteFromGemini();
 
-        // 11 වසර Groups වල JID මෙතැනට දාන්න
         const targetGroups = [
-            '120363429635141660@g.us', 
+            '120363429635141660@g.us', // ඔයාගේ Group JID එක
         ];
 
         const messageText = 
