@@ -16,7 +16,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Server is live on port ${PORT}`);
 });
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
@@ -63,9 +63,16 @@ let activeSock = null;
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_grade11');
     
+    // 🛡️ Auto-Logout වැළැක්වීමට Browser Profile සහ KeepAlive එක් කර ඇත
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: false,
+        browser: Browsers.macOS('Desktop'),
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000
     });
 
     activeSock = sock;
@@ -87,9 +94,11 @@ async function connectToWhatsApp() {
             
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 5000);
+            } else {
+                console.log('❌ WhatsApp වෙතින් Log Out වී ඇත. අලුතින් QR Code එක Scan කරන්න.');
             }
         } else if (connection === 'open') {
-            console.log('✅ ICT Short Note Bot (Textbook Grounded) සාර්ථකව සම්බන්ධ විය!');
+            console.log('✅ ICT Short Note Bot සාර්ථකව සම්බන්ධ විය!');
             
             if (!cronStarted) {
                 cronStarted = true;
@@ -158,9 +167,10 @@ async function connectToWhatsApp() {
     });
 }
 
-// 📖 අමුණන ලද 10 සහ 11 පෙළපොත් PDF දෙක ඇසුරෙන් පමණක් Short Note එක සෑදීම
+// 📖 10 සහ 11 පෙළපොත් PDF ද්විත්වය ඇසුරෙන් පමණක් Short Note එක සෑදීම
 async function generateShortNoteFromGemini() {
     const apiKey = process.env.GEMINI_API_KEY;
+    // 🔑 වලංගු Gemini මාදිලි නාමය
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
 
     const historySnapshot = await noteHistoryRef.once('value');
@@ -197,7 +207,6 @@ Return STRICTLY in JSON format:
   ]
 }`;
 
-    // 📎 පෙළපොත් දෙකේ URIs කෙලින්ම Gemini Input එකට සම්බන්ධ කිරීම
     const requestBody = {
         contents: [
             {
@@ -205,13 +214,13 @@ Return STRICTLY in JSON format:
                     {
                         fileData: {
                             mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/x7clqnazq98o" // 10 ශ්‍රේණිය පෙළපොත
+                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/x7clqnazq98o"
                         }
                     },
                     {
                         fileData: {
                             mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/he8on2exgrfx" // 11 ශ්‍රේණිය පෙළපොත
+                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/he8on2exgrfx"
                         }
                     },
                     {
@@ -222,7 +231,7 @@ Return STRICTLY in JSON format:
         ],
         generationConfig: { 
             responseMimeType: "application/json", 
-            temperature: 0.2 // පෙළපොතේ තොරතුරු වලට පමණක් දැඩිව සීමා කිරීමට
+            temperature: 0.2
         }
     };
 
