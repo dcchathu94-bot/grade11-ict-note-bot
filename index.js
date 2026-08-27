@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 // 🚀 Render Web Service එක Active තබා ගැනීමට HTTP Server එක
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Grade 10 & 11 ICT Textbook Short Note Bot is Live 24/7!\n');
+    res.end('Grade 10 & 11 ICT Strict Syllabus Bot is Live 24/7!\n');
 });
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -63,7 +63,6 @@ let activeSock = null;
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_grade11');
     
-    // 🛡️ Auto-Logout වැළැක්වීමට Browser Profile සහ KeepAlive එක් කර ඇත
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
@@ -95,14 +94,13 @@ async function connectToWhatsApp() {
             if (shouldReconnect) {
                 setTimeout(() => connectToWhatsApp(), 5000);
             } else {
-                console.log('❌ WhatsApp වෙතින් Log Out වී ඇත. අලුතින් QR Code එක Scan කරන්න.');
+                console.log('❌ WhatsApp වෙතින් Log Out වී ඇත.');
             }
         } else if (connection === 'open') {
             console.log('✅ ICT Short Note Bot සාර්ථකව සම්බන්ධ විය!');
             
             if (!cronStarted) {
                 cronStarted = true;
-                // උදේ 8.00 සහ සවස 4.00 ට
                 cron.schedule('0 8,16 * * *', () => {
                     console.log('⏰ නියමිත වෙලාව පැමිණ ඇත. Short Note එක සකසමින් පවතී...');
                     sendDailyShortNote(activeSock);
@@ -110,8 +108,6 @@ async function connectToWhatsApp() {
                     scheduled: true,
                     timezone: "Asia/Colombo"
                 });
-                
-                console.log('⏰ ටයිමර් පද්ධතිය සාර්ථකව ක්‍රියාත්මකයි (8:00 AM, 4:00 PM).');
             }
         }
     });
@@ -128,7 +124,7 @@ async function connectToWhatsApp() {
         }
 
         if (messageText === '!testnote') {
-            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. පෙළපොත් ඇසුරෙන් Short Note එක සකසමින් පවතී...' });
+            await sock.sendMessage(chatJid, { text: '🔄 ටෙස්ට් කිරීම ආරම්භ විය. නිල පෙළපොත් විෂය නිර්දේශය ඇසුරෙන් සටහන සකසමින් පවතී...' });
             sendDailyShortNote(activeSock); 
         }
 
@@ -138,7 +134,7 @@ async function connectToWhatsApp() {
                 const historyData = snapshot.val();
                 
                 if (historyData) {
-                    let textContent = "📚 මෙතෙක් යවන ලද ICT කෙටි සටහන් එකතුව (10 & 11 පෙළපොත් ඇසුරෙන්)\n\n";
+                    let textContent = "📚 මෙතෙක් යවන ලද ICT කෙටි සටහන් එකතුව (10 & 11 නිල පෙළපොත් ඇසුරෙන්)\n\n";
                     
                     Object.values(historyData).forEach(data => {
                         textContent += `==================================================\n` +
@@ -161,16 +157,14 @@ async function connectToWhatsApp() {
                 }
             } catch (err) {
                 console.error('History command error:', err.message);
-                await sock.sendMessage(chatJid, { text: '⚠️ History දත්ත ලබා ගැනීමේදී දෝෂයක් ඇතිවිය.' });
             }
         }
     });
 }
 
-// 📖 10 සහ 11 පෙළපොත් PDF ද්විත්වය ඇසුරෙන් පමණක් Short Note එක සෑදීම
+// 📖 ශ්‍රී ලංකා 10 සහ 11 ICT නිල විෂය නිර්දේශය පමණක් භාවිත කරමින් කෙටි සටහන සෑදීම
 async function generateShortNoteFromGemini() {
     const apiKey = process.env.GEMINI_API_KEY;
-    // 🔑 වලංගු Gemini මාදිලි නාමය
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
 
     const historySnapshot = await noteHistoryRef.once('value');
@@ -182,24 +176,42 @@ async function generateShortNoteFromGemini() {
     }
 
     const excludedTopicsText = previousTopics.length > 0 
-        ? `දැනටමත් සකසා ඇති මෙම මාතෘකා නැවත භාවිත නොකරන්න: ${JSON.stringify(previousTopics.slice(-60))}` 
+        ? `දැනටමත් සකසා ඇති මෙම මාතෘකා නැවත කිසිසේත් භාවිත නොකරන්න: ${JSON.stringify(previousTopics.slice(-60))}` 
         : '';
 
-    const promptText = `ඔබ ශ්‍රී ලංකා ජාතික අධ්‍යාපන ආයතනයේ (NIE) 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් පමණක් පරිශීලනය කරන ප්‍රවීණ ගුරුවරයෙකි.
+    const promptText = `ඔබ ශ්‍රී ලංකා අධ්‍යාපන ප්‍රකාශන දෙපාර්තමේන්තුවේ 10 සහ 11 ශ්‍රේණි ICT නිල පෙළපොත් පමණක් උගන්වන ප්‍රවීණ ගුරුවරයෙකි.
 
-අමුණා ඇති 10 සහ 11 ශ්‍රේණි පෙළපොත් PDF ලේඛන දෙකේ (Attached Files) අන්තර්ගතය පමණක් දැඩිව පදනම් කරගෙන, සාමාන්‍ය පෙළ (O/L) විභාගයට අතිශය වැදගත් කෙටි සටහනක් (Revision Short Note) පිරිසිදු සිංහලෙන් සකසන්න.
+පහත දක්වා ඇති නිල විෂය නිර්දේශයේ (Official Syllabus Blueprint) පාඩම් සහ මාතෘකා පමණක් දැඩිව පදනම් කරගෙන සාමාන්‍ය පෙළ (O/L) විභාගයට අදාළ කෙටි සටහනක් සකසන්න:
 
-⛔ අතිශය වැදගත් නීති (Strict Rules):
-1. පෙළපොතේ පිටුවල ඇති කරුණු සහ නිල සිංහල තාක්ෂණික වචනම පමණක් යොදාගන්න.
-2. පෙළපොතෙන් පිට කිසිදු බාහිර දැනුමක් (A/L ICT, Python, Java) ඇතුළත් නොකරන්න.
+📘 **10 ශ්‍රේණිය නිල පාඩම්:**
+1. තොරතුරු හා සන්නිවේදන තාක්ෂණයේ සංකල්ප (දත්ත, තොරතුරු, පරිගණක පද්ධතිය, ගුණාංග)
+2. පරිගණකයේ දෘඩාංග (ආදාන, ප්‍රතිදාන, සැකසුම්, මතක උපාංග, වරාය)
+3. දත්ත නිරූපණය (ද්විමය, අෂ්ටමය, ෂඩ්දශමය, ASCII, Unicode, BCD)
+4. මූලික තාර්කික ද්වාර (AND, OR, NOT, NAND, NOR, सत्यතා වගු)
+5. මෙහෙයුම් පද්ධති (GUI, CLI, කාර්යයන්, ගොනු කළමනාකරණය)
+6. වදන් සැකසුම් මෘදුකාංග (Word Processing)
+7. පැතුරුම්පත් මෘදුකාංග (Spreadsheets - Functions & Formulas)
+8. විද්‍යුත් ඉදිරිපත් කිරීම් (Electronic Presentations)
+9. පරිගණක දත්ත සමුදාය (Databases - Tables, Forms, Queries, Reports)
+
+📙 **11 ශ්‍රේණිය නිල පාඩම්:**
+1. පරිගණක ක්‍රමලේඛනය (Flowcharts, Pseudocode, Pascal ක්‍රමලේඛනය පමණි - Python/Java සම්පූර්ණයෙන්ම තහනම්)
+2. අන්තර්ජාලය සහ විද්‍යුත් තැපෑල (IP ලිපින, Domain Names, Search Engines, Protocols)
+3. බහුමාධ්‍ය තාක්ෂණය (Multimedia - ශ්‍රව්‍ය, දෘශ්‍ය, රූප ආකෘති)
+4. වෙබ් අඩවි නිර්මාණය (HTML Tags, Lists, Tables, Links)
+5. තොරතුරු හා සන්නිවේදන තාක්ෂණය සහ සමාජය (ආචාර ධර්ම, සයිබර් නීතිය, ඊ-අපද්‍රව්‍ය)
+
+⛔ **දැඩි නීති (Strict Rules):**
+1. ඉහත O/L විෂය නිර්දේශයෙන් පිට කිසිදු දැනුමක් (A/L ICT, Python, Java, C++, Cloud) ඇතුළත් නොකරන්න.
+2. පෙළපොතේ ඇති නිල සිංහල තාක්ෂණික වචනම පමණක් යොදාගන්න.
 3. ${excludedTopicsText}
 
-Return STRICTLY in JSON format:
+Return STRICTLY in JSON format with no markdown wrappers or extra text:
 {
   "grade": "10 ශ්‍රේණිය හෝ 11 ශ්‍රේණිය",
-  "unit": "පෙළපොතේ ඇති පාඩමේ නම",
+  "unit": "නිල පාඩමේ නම",
   "topic": "උප මාතෘකාව",
-  "content": "පෙළපොත ඇසුරෙන් පමණක් කෙටි, නිවැරදි සටහන (Clear paragraph with textbook terms)",
+  "content": "පෙළපොත් කරුණු ඇසුරෙන් පැහැදිලි කෙටි හැඳින්වීම",
   "keyPoints": [
     "🔹 විභාගයට වැදගත් කරුණ 1",
     "🔹 විභාගයට වැදගත් කරුණ 2",
@@ -211,21 +223,7 @@ Return STRICTLY in JSON format:
         contents: [
             {
                 parts: [
-                    {
-                        fileData: {
-                            mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/x7clqnazq98o"
-                        }
-                    },
-                    {
-                        fileData: {
-                            mimeType: "application/pdf",
-                            fileUri: "https://generativelanguage.googleapis.com/v1beta/files/he8on2exgrfx"
-                        }
-                    },
-                    {
-                        text: promptText
-                    }
+                    { text: promptText }
                 ]
             }
         ],
@@ -261,7 +259,7 @@ async function sendDailyShortNote(sock, retryCount = 0) {
     const MAX_RETRIES = 3;
     
     try {
-        console.log('Gemini AI මඟින් පෙළපොත් කියවා කෙටි සටහන සකසමින් පවතී...');
+        console.log('Gemini AI මඟින් පෙළපොත් විෂය නිර්දේශය කියවා කෙටි සටහන සකසමින් පවතී...');
         
         const noteData = await generateShortNoteFromGemini();
 
