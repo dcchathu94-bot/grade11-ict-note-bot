@@ -162,10 +162,12 @@ async function connectToWhatsApp() {
     });
 }
 
-// 📖 ශ්‍රී ලංකා 10 සහ 11 ICT නිල විෂය නිර්දේශය පමණක් භාවිත කරමින් කෙටි සටහන සෑදීම
+// 📖 ශ්‍රී ලංකා 10 සහ 11 ICT නිල විෂය නිර්දේශය මත පදනම්ව සටහන සෑදීම
 async function generateShortNoteFromGemini() {
     const apiKey = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    
+    // 🚀 Google AI Studio හි නවතම නිල මාදිලි
+    const models = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview'];
 
     const historySnapshot = await noteHistoryRef.once('value');
     const historyData = historySnapshot.val();
@@ -187,7 +189,7 @@ async function generateShortNoteFromGemini() {
 1. තොරතුරු හා සන්නිවේදන තාක්ෂණයේ සංකල්ප (දත්ත, තොරතුරු, පරිගණක පද්ධතිය, ගුණාංග)
 2. පරිගණකයේ දෘඩාංග (ආදාන, ප්‍රතිදාන, සැකසුම්, මතක උපාංග, වරාය)
 3. දත්ත නිරූපණය (ද්විමය, අෂ්ටමය, ෂඩ්දශමය, ASCII, Unicode, BCD)
-4. මූලික තාර්කික ද්වාර (AND, OR, NOT, NAND, NOR, सत्यතා වගු)
+4. මූලික තාර්කික ද්වාර (AND, OR, NOT, NAND, NOR, සත්‍යතා වගු)
 5. මෙහෙයුම් පද්ධති (GUI, CLI, කාර්යයන්, ගොනු කළමනාකරණය)
 6. වදන් සැකසුම් මෘදුකාංග (Word Processing)
 7. පැතුරුම්පත් මෘදුකාංග (Spreadsheets - Functions & Formulas)
@@ -220,39 +222,45 @@ Return STRICTLY in JSON format with no markdown wrappers or extra text:
 }`;
 
     const requestBody = {
-        contents: [
-            {
-                parts: [
-                    { text: promptText }
-                ]
-            }
-        ],
+        contents: [{ parts: [{ text: promptText }] }],
         generationConfig: { 
             responseMimeType: "application/json", 
             temperature: 0.2
         }
     };
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-    });
+    let lastError = null;
 
-    const result = await response.json();
+    for (const model of models) {
+        try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
 
-    if (!result.candidates || !result.candidates[0]?.content?.parts?.[0]?.text) {
-        console.error('Gemini API Response Error:', JSON.stringify(result));
-        throw new Error('Gemini API එකෙන් දත්ත ලැබුණේ නැත.');
+            const result = await response.json();
+
+            if (result.error) {
+                console.warn(`⚠️ Model ${model} unavailable (${result.error.code}), trying next...`);
+                lastError = result.error.message;
+                continue;
+            }
+
+            if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+                const rawJSON = result.candidates[0].content.parts[0].text;
+                const jsonMatch = rawJSON.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    return JSON.parse(jsonMatch[0]);
+                }
+            }
+        } catch (err) {
+            lastError = err.message;
+        }
     }
 
-    const rawJSON = result.candidates[0].content.parts[0].text;
-    const jsonMatch = rawJSON.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        throw new Error('වලංගු JSON එකක් ලැබුණේ නැත.');
-    }
-    
-    return JSON.parse(jsonMatch[0]);
+    throw new Error('Gemini API Error: ' + lastError);
 }
 
 async function sendDailyShortNote(sock, retryCount = 0) {
